@@ -1,0 +1,52 @@
+
+#include "lib/vandal.dl"
+
+.decl todCall(stmt: Statement)
+
+.output todCall
+// .output SSTORE
+// .output SLOAD
+
+.decl runtimeCode(opcode:Opcode)
+runtimeCode("ADDRESS").
+runtimeCode("ORIGIN").
+runtimeCode("CALLER").
+runtimeCode("CALLVALUE").
+runtimeCode("CALLDATALOAD").
+runtimeCode("CALLDATASIZE").
+runtimeCode("CODESIZE").
+runtimeCode("GASPRICE").
+
+// write the value of Variable var to storage location val in Statement stmt
+.decl SSTORE(stmt: Statement, val: Value, var: Variable)
+
+SSTORE(stmt, val, var) :-
+  op(stmt,"SSTORE"),
+  use(index, stmt, 1),
+  use(var, stmt, 2),
+  value(index, val).
+
+// read the value of storage location val to Variable var in Statement stmt
+.decl SLOAD(stmt: Statement, val: Value, var: Variable)
+
+SLOAD(stmt, val, var) :-
+  op(stmt,"SLOAD"),
+  use(index, stmt, 1),
+  def(var, stmt),
+  value(index, val).
+
+.decl setBySource(var:Variable)
+
+// A variable could be set by the transaction source
+setBySource(var) :-
+  def(var, stmt),
+  op(stmt, opcode),
+  runtimeCode(opcode).
+
+todCall(stmt) :-
+  setBySource(x1),
+  depends(x2, x1),
+  SSTORE(_, val, x2),
+  SLOAD(_, val, y1),
+  depends(y2, y1),
+  op_CALL(stmt, _, _, y2, _, _, _, _).

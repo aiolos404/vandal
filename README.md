@@ -1,37 +1,232 @@
-[![Build Status](https://travis-ci.org/usyd-blockchain/vandal.svg?branch=master)](https://travis-ci.org/usyd-blockchain/vandal)
+# Time and Process
 
-# Vandal
+~8.5 hours in total.
 
-Vandal is a static program analysis framework for Ethereum smart contract
-bytecode, developed at [The University of
-Sydney](https://sydney.edu.au/engineering/about/school-of-computer-science.html).
-It decompiles an EVM bytecode program to an equivalent intermediate
-representation that encodes the program's control flow graph. This
-representation removes all stack operations, thereby exposing data dependencies
-that are otherwise obscured. This information is then fed, with a Datalog
-specification, into the [Souffle](http://souffle-lang.org) analysis engine for
-the extraction of program properties.
+2 hours reading related literature for background knowledge.
 
-A more comprehensive description of the Vandal Framework is [available on the
-Wiki](https://github.com/usyd-blockchain/vandal/wiki), along with a [getting started guide](https://github.com/usyd-blockchain/vandal/wiki/Getting-Started-with-Vandal).
+2 hours exploring some tools, namely
+[Oyente](https://github.com/enzymefinance/oyente), 
+[Slither](https://github.com/crytic/slither), and 
+[Vandal](https://github.com/usyd-blockchain/vandal).
 
-Vandal is licensed under the [BSD 3-Clause License](/LICENSE).
+1 hour identifying a suitable issue for this project.
 
-## Publications
+2 hours writing code and performing experiments.
 
-* _Vandal: A Scalable Security Analysis Framework for Smart Contracts_,
- Lexi Brent, Anton Jurisevic, Michael Kong, Eric Liu, Francois
-  Gauthier, Vincent Gramoli, Ralph Holz, Bernhard Scholz, Technical Report, School of Computer Science, The University of Sydney, Sydney, Australia, September 2018. [[pdf](https://arxiv.org/pdf/1809.03981.pdf)] [[BibTeX](pubs/Vandal18.bib)]
+1.5 hours writing this document.
 
-* _MadMax: Surviving Out-of-Gas Conditions in Ethereum Smart Contracts_,
-Neville Grech, Michael Kong, Anton Jurisevic, Lexi Brent, Bernhard Scholz, Yannis Smaragdakis, SPLASH 2018 OOPSLA, Boston, November 2018. [[pdf](pubs/Grech18-OOPSLA.pdf)] [[BibTeX](pubs/Grech18.bib)]
 
-* _A Scalable Method to Analyze Gas Costs, Loops and Related Security Vulnerabilities on the Ethereum Virtual Machine_, Michael Kong, Honours Thesis, November 2017, School of Computer Science, The University of Sydney. [[pdf](pubs/MKong17.pdf)] [[BibTeX](pubs/MKong17.bib)]
+## Choice for the Tool
 
-## Resources
+First of all, given the limited amount of time, it is a good idea to start from 
+an existing 
+framework to detect some issues. Either parsing and analyzing the Solidity source code
+or analyzing the EVM bytecode will require good infrastructures. 
 
-- [Overview of Vandal](https://github.com/usyd-blockchain/vandal/wiki)
-- [Getting Started with Vandal](https://github.com/usyd-blockchain/vandal/wiki/Getting-Started-with-Vandal)
-- [Demo: Creating a new analysis specification in Vandal](https://github.com/usyd-blockchain/vandal/wiki/Demo:-Creating-a-new-analysis-specification-in-Vandal)
-- [Vandal technical paper](https://arxiv.org/pdf/1809.03981.pdf)
-- [Summary of EVM Instructions](https://github.com/usyd-blockchain/vandal/wiki/Summary-of-EVM-Instructions)
+
+[Vandal](https://github.com/usyd-blockchain/vandal) is used as the staring pointing 
+for this project for the following reasons.
+
+1. It accepts EVM bytecode as input. This enables the tool to cover a larger set 
+of EVM based smart contracts (as supposed to taking Solidity code as input).
+
+2. It provides right levels of abstractions. Vandal first decompiles the EVM bytecode
+into three-address code (TAC). Then, Vandal extracts higher-level information 
+(data flows, control flows, etc.) and express this information in Datalog rules.
+One could write and analysis using both three-address code primitives and higher-level 
+Datalog rules.
+
+
+## Choice for the Issue
+
+For this project, the Transaction order dependence (TOD) issue is chosen based on the
+following criteria.
+
+1. The issue has not been solved using the Vandal framework. So, issues including 
+Reentrancy, Unchecked Call, and Out-of-Gas are not chosen. 
+2. The issue involves some domain knowledge in EVM smart contracts. The TOD issue 
+involves state variables, which are something special.
+
+# Problem
+
+Detecting Transaction Order Dependence
+
+Transaction order dependence (TOD) is a know issue where different execution orders of 
+transactions lead to different results.
+Here is a typical scenario for this issue. We have two transactions T1 and T2 invoking 
+contract C. T1 set a reward amount, and T2 send the reward to a user. One might observe 
+such two transactions and manipulate the order of these two transactions being included
+in the block, so the user being rewarded may receive different amounts of rewards.
+
+This issue is documented here https://swcregistry.io/docs/SWC-114 with contract samples.
+This is a minimal example demonstrate the TOD issue. If there is one transaction invoking
+the setReward() function which updates the reward state variable and anther transaction 
+claiming the reward by invoking the claimReward() function, different orders of these two
+transactions will transfer different rewards to the receiver.
+
+```solidity
+/*
+ * @source: https://github.com/ConsenSys/evm-analyzer-benchmark-suite
+ * @author: Suhabe Bugrara
+ */
+
+pragma solidity ^0.4.16;
+
+contract EthTxOrderDependenceMinimal {
+    address public owner;
+    bool public claimed;
+    uint public reward;
+
+    function EthTxOrderDependenceMinimal() public {
+        owner = msg.sender;
+    }
+
+    function setReward() public payable {
+        require (!claimed);
+
+        require(msg.sender == owner);
+        // owner.transfer(reward);
+        reward = msg.value; 
+    }
+
+    function claimReward(uint256 submission) {
+        require (!claimed);
+        require(submission < 10);
+
+        msg.sender.transfer(reward);
+        claimed = true;
+    }
+}
+``` 
+
+This is a contract without the issue.
+
+
+```solidity
+/*
+ * @source: https://github.com/ConsenSys/evm-analyzer-benchmark-suite
+ * @author: Suhabe Bugrara
+ */
+
+pragma solidity ^0.4.16;
+
+contract EthTxOrderDependenceMinimal {
+    address public owner;
+    bool public claimed;
+    uint public reward = 5; // changed here 
+
+    function EthTxOrderDependenceMinimal() public {
+        owner = msg.sender;
+    }
+
+    function setReward() public payable {
+        require (!claimed);
+
+        require(msg.sender == owner);
+        // owner.transfer(reward);
+        // reward = msg.value; // changed here 
+    }
+
+    function claimReward(uint256 submission) {
+        require (!claimed);
+        require(submission < 10);
+
+        msg.sender.transfer(reward);
+        claimed = true;
+    }
+}
+``` 
+
+# Detecting TOD Issues
+
+When TOD happens, there is one transaction T1 updates a state variable V.
+To this end, we define the following Datalog rule.
+
+```datalog
+// write the value of Variable var to storage location val in Statement stmt
+.decl SSTORE(stmt: Statement, val: Value, var: Variable)
+
+SSTORE(stmt, val, var) :-
+  op(stmt,"SSTORE"),
+  use(index, stmt, 1), // write to the storage location indexed by the value of Variable index
+  use(var, stmt, 2), // write the value of Variable var to the storage location
+  value(index, val). // Variable index has value val
+```
+
+There is another transaction T2
+makes a call whose argument $value is dependent on the state variable V.
+Since the argument $value is dependent on V, this transaction reads from V.
+we define the following Datalog rule.
+
+```datalog
+// read the value of storage location val to Variable var in Statement stmt
+.decl SLOAD(stmt: Statement, val: Value, var: Variable)
+
+SLOAD(stmt, val, var) :-
+  op(stmt,"SLOAD"),
+  use(index, stmt, 1), // read from the storage location indexed by the value of Variable index
+  def(var, stmt), // the read result is in Variable var 
+  value(index, val). // // Variable index has value val
+```
+
+
+Finally, putting these together, T1 sets the value of x1, and the value 
+of x2 is dependent on x1, and T1 writes to storage location val with the value 
+of x2. Then, T2 makes a storage load and loads the result into y1. 
+Note that SSTORE and SLOAD share the same $val argument. This means the 
+associated read and write operations access the same storage location (and the
+same state variable). 
+The value of y2 is dependent on y1, 
+and the value of y2 is used as the argument $value in CALL.
+
+
+```datalog
+todCall(stmt) :-
+  setBySource(x1),
+  depends(x2, x1),
+  SSTORE(_, val, x2),
+  SLOAD(_, val, y1),
+  depends(y2, y1),
+  op_CALL(stmt, _, _, y2, _, _, _, _).
+```
+
+# Implementations and Experiments
+
+## Implementation
+
+The analysis is in ./datalog/tod.dl, and it depends on some other files in the
+./datalog/lib folder.
+
+## Install the Tool
+
+The requirements for this tool could be generally installed using the following command:
+
+```bash
+pip install -r requirements.txt
+``` 
+
+Here are more 
+[detailed instructions](https://github.com/usyd-blockchain/vandal/wiki/Getting-Started-with-Vandal#writing-analyses) 
+from the original repo.
+
+
+## Benchmarks
+
+A contract with TOD issue: ./myExamples/tod/tod.sol
+
+A contract without TOD issue: ./myExamples/tod/todNot.sol
+
+## Running the experiments
+
+From the root of the project,
+
+```bash
+cd myExamples/tod
+solc --bin-runtime tod.sol | tail -n 1 > tod.hex
+../../bin/analyze.sh tod.hex ../../datalog/tod.dl
+```
+The result is in the todCall.csv file. Similarly, for the contract without TOD issue,
+```
+solc --bin-runtime todNot.sol | tail -n 1 > todNot.hex
+../../bin/analyze.sh todNot.hex ../../datalog/tod.dl
+```
